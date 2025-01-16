@@ -1,0 +1,25 @@
+{
+  "name": "com.supermaxim.pubsub",
+  "displayName": "PubSub",
+  "description": "PubSub",
+  "version": "1.0.1",
+  "unity": "2022.3",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lehuynhthang99/ForkPubsub.git"
+  },
+  "author": {
+    "name": "Nura",
+    "email": "lehuynhthang99@gmail.com"
+  },
+  "dependencies": {
+  },
+  "keywords": [
+	"pubsub",
+	"unity"
+  ],
+  "release": {
+    "branches": ["main"]
+  }
+}

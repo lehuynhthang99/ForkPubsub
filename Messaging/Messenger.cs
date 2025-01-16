@@ -17,7 +17,7 @@ namespace SuperMaxim.Messaging
     public sealed class Messenger : Singleton<IMessenger, Messenger>, IMessenger
     {
         // Mapping [PAYLOAD_TYPE]->[MAP(INT, SUBSCRIBER)]
-        private readonly Dictionary<Type, Dictionary<int, Subscriber>> _subscribersSet = 
+        private readonly Dictionary<Type, Dictionary<int, Subscriber>> _subscribersSet =
                                                 new Dictionary<Type, Dictionary<int, Subscriber>>();
 
         // List of subscribers to optimize iteration during subscribers processing  
@@ -26,8 +26,10 @@ namespace SuperMaxim.Messaging
         // List of subscribers to optimize add (subscribe) operation 
         private readonly List<Subscriber> _add = new List<Subscriber>();
 
-        // flag, if "true" then do not do changes in "_subscribersSet" dic.
-        private bool _isPublishing;
+        // flag, if >= 0 then do not do changes in "_subscribersSet" dic.
+        private int _publishingTaskCount;
+
+        private bool IsPublishing => _publishingTaskCount > 0;
 
         /// <summary>
         /// Static CTOR to initialize other monitoring tools (singletons)
@@ -52,7 +54,7 @@ namespace SuperMaxim.Messaging
         public IMessengerPublish Publish<T>(T payload)
         {
             // if calling thread is same as main thread, call "PublishInternal" directly
-            if(Thread.CurrentThread.ManagedThreadId == MainThreadDispatcher.Default.ThreadId)
+            if (Thread.CurrentThread.ManagedThreadId == MainThreadDispatcher.Default.ThreadId)
             {
                 PublishInternal(payload);
                 return this;
@@ -78,7 +80,7 @@ namespace SuperMaxim.Messaging
             try
             {
                 // turn on the flag
-                _isPublishing = true;
+                _publishingTaskCount++;
 
                 var key = typeof(T); // capture the type of the payload in local var.
                 // exit method, if subscribers' dic. does not contain the given payload type
@@ -91,7 +93,7 @@ namespace SuperMaxim.Messaging
                 _subscribersSet.TryGetValue(key, out var callbacks);
                 // check if "callbacks" dic. is null or empty 
                 if (callbacks.IsNullOrEmpty())
-                {                
+                {
                     // remove payload type key is "callbacks" dic is empty
                     _subscribersSet.Remove(key);
                     return;
@@ -106,9 +108,12 @@ namespace SuperMaxim.Messaging
             finally
             {
                 // turn off the flag
-                _isPublishing = false;
+                _publishingTaskCount--;
                 // process pending tasks
-                Process();
+                if (!IsPublishing)
+                {
+                    Process();
+                }
             }
         }
 
@@ -122,7 +127,7 @@ namespace SuperMaxim.Messaging
         public IMessengerSubscribe Subscribe<T>(Action<T> callback, Predicate<T> predicate = null)
         {
             // check if current thread ID == main thread ID
-            if(Thread.CurrentThread.ManagedThreadId == MainThreadDispatcher.Default.ThreadId)
+            if (Thread.CurrentThread.ManagedThreadId == MainThreadDispatcher.Default.ThreadId)
             {
                 // execute subscribe method on main thread
                 SubscribeInternal(callback, predicate);
@@ -153,7 +158,7 @@ namespace SuperMaxim.Messaging
             var sub = new Subscriber(key, callback, predicate);
 
             // check if messenger is busy with publishing payloads
-            if(_isPublishing)
+            if (IsPublishing)
             {
                 // add subscriber into "Add" queue if messenger is busy with publishing
                 _add.Add(sub);
@@ -170,7 +175,7 @@ namespace SuperMaxim.Messaging
         private void SubscribeInternal(Subscriber subscriber)
         {
             // check is subscriber is valid
-            if(!(subscriber is {IsAlive: true}))
+            if (!(subscriber is { IsAlive: true }))
             {
                 Loggers.Console.LogError("The {0} is null or not alive.", nameof(subscriber));
                 return;
@@ -199,7 +204,7 @@ namespace SuperMaxim.Messaging
             }
 
             // check if subscriber is already registered
-            if(callbacks.ContainsKey(subscriber.Id))
+            if (callbacks.ContainsKey(subscriber.Id))
             {
                 return;
             }
@@ -222,7 +227,7 @@ namespace SuperMaxim.Messaging
         public IMessengerUnsubscribe Unsubscribe<T>(Action<T> callback)
         {
             // check if method called on main thread
-            if(Thread.CurrentThread.ManagedThreadId == MainThreadDispatcher.Default.ThreadId)
+            if (Thread.CurrentThread.ManagedThreadId == MainThreadDispatcher.Default.ThreadId)
             {
                 // call internal method
                 UnsubscribeInternal(callback);
@@ -245,7 +250,7 @@ namespace SuperMaxim.Messaging
         private void UnsubscribeInternal<T>(Action<T> callback)
         {
             // capture payload type into 'key' var
-            var key = typeof(T);          
+            var key = typeof(T);
             // capture subscribers dic into 'dic' var
             var dic = _subscribersSet;
             // check if payload is registered 
@@ -257,7 +262,7 @@ namespace SuperMaxim.Messaging
             // get list of callbacks for the payload
             dic.TryGetValue(key, out var callbacks);
             // check if callbacks list is null or empty and if messenger is publishing payloads
-            if(!_isPublishing && callbacks.IsNullOrEmpty())
+            if (!IsPublishing && callbacks.IsNullOrEmpty())
             {
                 // remove payload from subscribers dic
                 dic.Remove(key);
@@ -267,14 +272,14 @@ namespace SuperMaxim.Messaging
             // get callback ID
             var id = callback.GetHashCode();
             // check if callback is registered
-            if(callbacks.ContainsKey(id))
+            if (callbacks.ContainsKey(id))
             {
                 // get subscriber instance and dispose it
                 var subscriber = callbacks[id];
-                subscriber.Dispose();         
-                
+                subscriber.Dispose();
+
                 // check if messenger is busy with publishing
-                if(!_isPublishing)
+                if (!IsPublishing)
                 {
                     // remove the subscriber from the callbacks dic
                     callbacks.Remove(id);
@@ -285,9 +290,9 @@ namespace SuperMaxim.Messaging
                     }
                 }
             }
-            
+
             // check is messenger is busy with publishing or if callbacks are NOT empty
-            if(_isPublishing || !callbacks.IsNullOrEmpty())
+            if (IsPublishing || !callbacks.IsNullOrEmpty())
             {
                 return;
             }
@@ -302,16 +307,16 @@ namespace SuperMaxim.Messaging
         private void Process()
         {
             // cleanup "dead" subscribers
-            for(var i = 0; i < _subscribers.Count; i++)
+            for (var i = 0; i < _subscribers.Count; i++)
             {
                 var subscriber = _subscribers[i];
-                if(subscriber == null)
+                if (subscriber == null)
                 {
                     _subscribers.RemoveAt(i);
                     i--;
                     continue;
                 }
-                if(subscriber.IsAlive)
+                if (subscriber.IsAlive)
                 {
                     continue;
                 }
@@ -319,7 +324,7 @@ namespace SuperMaxim.Messaging
                 _subscribers.Remove(subscriber);
                 i--;
 
-                if(!_subscribersSet.ContainsKey(subscriber.PayloadType))
+                if (!_subscribersSet.ContainsKey(subscriber.PayloadType))
                 {
                     continue;
                 }
@@ -327,11 +332,11 @@ namespace SuperMaxim.Messaging
                 var callbacks = _subscribersSet[subscriber.PayloadType];
                 callbacks.Remove(subscriber.Id);
 
-                if(callbacks.Count > 0)
+                if (callbacks.Count > 0)
                 {
                     continue;
-                }            
-                _subscribersSet.Remove(subscriber.PayloadType);     
+                }
+                _subscribersSet.Remove(subscriber.PayloadType);
             }
 
             // add waiting subscribers
